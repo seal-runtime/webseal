@@ -1,0 +1,17 @@
+[package]
+name = "webseal"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+# cdylib tells Cargo to produce a C‑compatible dynamic library
+crate-type = ["cdylib"]
+
+[dependencies]
+libloading = "0.9.0"
+seal = { git = "https://github.com/seal-runtime/sealbindings", package = "sealbindings" }
+libc = "0.2"
+bstr = "1.12.1"
+tao = "0.34.5"
+wry = { version = "0.54.1", features = [ "transparent" ] }
+crossbeam-channel = "0.5.15"

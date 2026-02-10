@@ -1,0 +1,145 @@
+<html>
+  <head>
+    <style>
+      html {
+        font-family: sans-serif;
+        /* background-color: #0b1e39; */
+        background: transparent;
+        overflow: hidden;
+      }
+
+      body {
+        /* background-color: #0b1e39; */
+        background: transparent;
+        overflow: hidden;
+      }
+
+      button {
+        border-radius: 12px;
+        background-color: #10366b;
+        padding: 6px;
+        color: white;
+        border-width: 2px;
+        border-color: white;
+      }
+
+      * {
+        padding: 0;
+        margin: 0;
+        box-sizing: border-box;
+      }
+
+      *[data-wry-darg-region] {
+        app-region: drag; /* Supported on Windows only, on WebView2 123+ and makes dragging with touch work */
+      }
+
+      main {
+        display: grid;
+        place-items: center;
+        height: calc(100vh - 30px);
+        margin-top: 30px;
+        padding-left: 6px;
+        padding-right: 6px;
+        /* background-color: white; */
+        background-color: #0b1e39;
+        color: white;
+        border-radius: 0 0 12px 12px;
+        overflow: auto;
+      }
+
+      .titlebar {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+
+        height: 30px;
+        padding-left: 12px;
+
+        display: grid;
+        grid-auto-flow: column;
+        grid-template-columns: 1fr max-content max-content max-content;
+        align-items: center;
+
+        background: #10366b;
+        border-radius: 12px 12px 0 0;
+        color: white;
+        user-select: none;
+        -webkit-user-select: none;
+        -webkit-user-drag: none;
+
+        z-index: 9999; /* Ensure it stays above everything */
+      }
+
+      .titlebar-button {
+        display: inline-flex;
+        justify-content: center;
+        align-items: center;
+        width: 30px;
+        height: 30px;
+      }
+
+      .titlebar-button:hover {
+        background: #3b3b3b;
+      }
+
+      .titlebar-button#close:hover {
+        background: #da3d3d;
+        border-radius: 0 12px 0 0;
+      }
+
+      .titlebar-button img {
+        filter: invert(100%);
+      }
+    </style>
+  </head>
+
+  <body>
+    <div class="titlebar">
+      <div data-wry-darg-region>!REPLACETITLE!</div>
+      <div>
+        <div
+          class="titlebar-button"
+          onclick="window.ipc.postMessage('input!minimize')"
+        >
+          <img src="https://api.iconify.design/codicon:chrome-minimize.svg" />
+        </div>
+        <div
+          class="titlebar-button"
+          onclick="window.ipc.postMessage('input!maximize')"
+        >
+          <img src="https://api.iconify.design/codicon:chrome-maximize.svg" />
+        </div>
+        <div
+          class="titlebar-button"
+          id="close"
+          onclick="window.ipc.postMessage('input!close')"
+        >
+          <img src="https://api.iconify.design/codicon:close.svg" />
+        </div>
+      </div>
+    </div>
+    <main>
+      !REPLACEBODY!
+    </main>
+    <script>
+      document.addEventListener("mousemove", (e) => {
+        window.ipc.postMessage(`input!mousemove:${e.clientX},${e.clientY}`)
+      });
+      document.addEventListener("mousedown", (e) => {
+        if (e.target.hasAttribute("data-wry-darg-region") && e.button === 0) {
+          e.detail === 2
+            ? window.ipc.postMessage("input!maximize")
+            : window.ipc.postMessage("input!drag_window");
+        } else {
+          window.ipc.postMessage(`input!mousedown:${e.clientX},${e.clientY}`);
+        }
+      });
+      document.addEventListener("touchstart", (e) => {
+        if (e.target.hasAttribute("data-wry-darg-region")) {
+          window.ipc.postMessage("input!drag_window");
+        }
+      });
+    </script>
+  </body>
+</html>
