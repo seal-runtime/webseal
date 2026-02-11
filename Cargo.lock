@@ -1749,10 +1749,7 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 [[package]]
 name = "sealbindings"
 version = "0.1.0"
-source = "git+https://github.com/seal-runtime/sealbindings#380e4487aaa34f6d148124118bc306015aba8187"
-dependencies = [
- "libloading",
-]
+source = "git+https://github.com/seal-runtime/sealbindings#737a83ef8a2fcf47847921e9ec79676235b34e8a"
 
 [[package]]
 name = "selectors"
