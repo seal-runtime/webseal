@@ -2,7 +2,6 @@ use std::cell::RefCell;
 
 use std::ffi::c_int;
 
-pub mod utils;
 pub mod options;
 
 mod webview_ipc;
@@ -10,7 +9,7 @@ mod resize;
 
 use webview_ipc::WebviewIpc;
 
-use seal::{ffi, push_wrapped_c_function, push_wrapped_error};
+use sealbindings::{LuauState, SealValue, StateExt};
 
 use options::WebviewOptions;
 
@@ -61,7 +60,8 @@ fn spawn(options: WebviewOptions, sender: crossbeam_channel::Sender<ToLuau>, rec
         .with_transparent(true)
         .with_title(&options.title)
         .with_inner_size(LogicalSize::new(options.size.0, options.size.1))
-        .with_resizable(options.resizeable);
+        .with_resizable(options.resizeable)
+        .with_always_on_top(options.always_on_top);
 
     // why do none of these methods take in &self instead of the whole self
     let builder = if let Some(max_size) = options.max_size {
@@ -113,14 +113,33 @@ fn spawn(options: WebviewOptions, sender: crossbeam_channel::Sender<ToLuau>, rec
             }
         } else {
             let _ = handler_proxy.send_event(UserEvent::SendIpc(body.clone()));
-            // let _ = handler_proxy.send_event(UserEvent::InvokeLuauCallback(body.clone()));
         }
     };
 
-    const HTML_HEADER: &str = include_str!("./template.html");
+    let visible_titlebar = if options.show_titlebar {
+        Some(options.title)
+    } else {
+        None
+    };
 
-    let html = HTML_HEADER.replace("!REPLACETITLE!", &options.title);
-    let html = html.replace("!REPLACEBODY!", &options.html);
+    const TEMPLATE_WITH_TITLEBAR: &str = include_str!("./template_with_titlebar.html");
+    const TEMPLATE_WITHOUT_TITLEBAR: &str = include_str!("./template_without_titlebar.html");
+
+    fn build_html(title: Option<String>, new_html: String) -> String {
+        let mut html = if title.is_some() {
+            TEMPLATE_WITH_TITLEBAR
+        } else {
+            TEMPLATE_WITHOUT_TITLEBAR
+        }.to_string();
+
+        if let Some(title) = title {
+            html = html.replace("!REPLACETITLE!", &title);
+        }
+
+        html.replace("!REPLACEBODY!", &new_html)
+    }
+
+    let html = build_html(visible_titlebar.clone(), options.html.clone());
 
     let builder = WebViewBuilder::new()
         .with_html(html)
@@ -177,8 +196,7 @@ fn spawn(options: WebviewOptions, sender: crossbeam_channel::Sender<ToLuau>, rec
 
         if let Some(new_html) = new_html {
             let webview = webview.borrow_mut();
-            let html = HTML_HEADER.replace("!REPLACETITLE!", &options.title);
-            let html = html.replace("!REPLACEBODY!", &new_html);
+            let html = build_html(visible_titlebar.clone(), new_html);
             let _ = webview.load_html(&html);
         }
 
@@ -235,25 +253,21 @@ fn spawn(options: WebviewOptions, sender: crossbeam_channel::Sender<ToLuau>, rec
     // Ok(())
 }
 
-unsafe extern "C-unwind" fn webview_create(state: *mut ffi::lua_State) -> c_int {
+unsafe extern "C-unwind" fn webview_create(state: *mut LuauState) -> c_int {
     let function_name = "webview.create(options: WebviewOptions)";
 
-    let top = unsafe { ffi::lua_gettop(state) };
-    if top != 1 {
-        push_wrapped_error(state, &format!("{}: incorrect number of arguments passed; expected 1 argument (table), got: {}", function_name, top));
-    }
-
-    let t = unsafe { utils::type_of(state, -1) };
-    if t != b"table" {
-        push_wrapped_error(state, &format!("{}: expected table, got: {}", function_name, t));
-        return 1;
-    }
-
-    // SAFETY: state must be valid, stack top is luau table
-    let options = match unsafe { WebviewOptions::from_table_on_stack(state, function_name) } {
-        Ok(options) => options,
-        Err(error_code) => { // error message is pushed to stack
-            return error_code;
+    let options = match state.to_seal(-1) {
+        SealValue::Table => {
+            // SAFETY: state must be valid, stack top is luau table
+            match unsafe { WebviewOptions::from_table_on_stack(state, function_name) } {
+                Ok(options) => options,
+                Err(code) => { // error message already pushed to stack
+                    return code
+                }
+            }
+        },
+        other => {
+            return state.push_wrapped_error(format!("{} expected options to be a WebviewOptions table, got: {:?}", function_name, other));
         }
     };
 
@@ -271,45 +285,12 @@ unsafe extern "C-unwind" fn webview_create(state: *mut ffi::lua_State) -> c_int 
         receiver: to_luau_rx,
     });
 
-    let boxed = Box::into_raw(handler);
-
+    let raw = Box::into_raw(handler);
+    // SAFETY: raw was just made into a raw ptr via Box::into_raw and is valid
+    // and aligned for reads and writes
     unsafe {
-        ffi::luaL_checkstack(state, 6, c"can't stack".as_ptr());
-        ffi::lua_createtable(state, 0, 6);
-
-        ffi::lua_pushvalue(state, -1); // copy table val so index points to itself and doesnt get self popped
-        ffi::lua_setfield(state, -2, c"__index".as_ptr()); // __index should point to itself
-
-        push_wrapped_c_function(state, WebviewIpc::replace_html);
-        ffi::lua_setfield(state, -2, c"replace_html".as_ptr());
-
-        push_wrapped_c_function(state, WebviewIpc::try_read);
-        ffi::lua_setfield(state, -2, c"try_read".as_ptr());
-
-        push_wrapped_c_function(state, WebviewIpc::close);
-        ffi::lua_setfield(state, -2, c"close".as_ptr());
-
-        push_wrapped_c_function(state, WebviewIpc::alert);
-        ffi::lua_setfield(state, -2, c"alert".as_ptr());
-
-        push_wrapped_c_function(state, WebviewIpc::size);
-        ffi::lua_setfield(state, -2, c"size".as_ptr());
-
-        ffi::lua_pushstring(state, c"WebviewIpc".as_ptr());
-        ffi::lua_setfield(state, -2, c"__type".as_ptr()); // typeof(ud)
-
-        ffi::lua_setuserdatametatable(state, 13);
-
-        let ud = ffi::lua_newuserdatataggedwithmetatable(
-            state, 
-            std::mem::size_of::<*mut WebviewIpc>(), 
-            webview_ipc::WEBVIEW_IPC_TAG
-        ) as *mut *mut WebviewIpc;
-        // write the pointer *mut WebviewIpc into userdata that stores *mut *mut WebviewIpc
-        *ud = boxed;
-    }
-
-    // WebviewIpc userdata left on stack
+        WebviewIpc::from_raw(state, raw);
+    } // WebviewIpc userdata left on stack
 
     1
 }
@@ -329,16 +310,19 @@ unsafe extern "C-unwind" fn webview_create(state: *mut ffi::lua_State) -> c_int 
 ///   In Rust, use `std::mem::ManuallyDrop` to keep a libloading Library alive for longer than the function call.
 /// - This function must call `sealbindings::initialize()` immediately.
 #[unsafe(no_mangle)]
-pub unsafe extern "C-unwind" fn seal_open_extern(state: *mut ffi::lua_State, ptr: *const seal::ffi::api::LuauApi) -> c_int {
+pub unsafe extern "C-unwind" fn seal_open_extern(
+    state: *mut sealbindings::LuauState,
+    api: *const sealbindings::LuauApi
+) -> c_int {
     unsafe {
-        seal::initialize(ptr);
+        sealbindings::initialize(state, api, |state| {
+            WebviewIpc::setup_metatable(state);
 
-        ffi::lua_createtable(state, 0, 0);
+            state.create_table(0, 1);
+            state.set_wrapped_function(c"create", webview_create, c"webview.create(options: WebviewOptions) -> Webview");
 
-        push_wrapped_c_function(state, webview_create);
-        ffi::lua_setfield(state, -2, c"create".as_ptr());
-
-        // table left on stack
+            1 // table left on stack
+        })
+        // seal::initialize(ptr);
     }
-    1
 }

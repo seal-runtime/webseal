@@ -3,12 +3,20 @@ local env = require("@std/env")
 local fs = require("@std/fs")
 
 export type WebviewOptions = {
+    --- Defines the window manager title for the window as well as the visual title in the titlebar, if shown.
     title: string,
+    --- Show the titlebar as part of the actual html? If disabled, doesn't show the close/minimize/etc. buttons as well.
+    --- Defaults to `true`.
+    show_titlebar: boolean?,
     html: string,
+    --- starting size of the window
     size: vector?,
-    resizeable: boolean?,
+
     min_size: vector?,
     max_size: vector?,
+
+    resizeable: boolean?,
+    always_on_top: boolean?,
 }
 
 type WebviewIpc = {

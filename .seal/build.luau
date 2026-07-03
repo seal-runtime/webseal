@@ -2,7 +2,7 @@ local env = require("@std/env")
 local fs = require("@std/fs")
 local process = require("@std/process")
 
-local BUILD: "debug" | "release" = "release"
+local BUILD: "debug" | "release" = "debug"
 
 local target_os, target_arch = env.os:lower(), env.arch
 local tag = `{target_os}-{target_arch}`

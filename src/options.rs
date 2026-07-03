@@ -1,109 +1,121 @@
-use libc::c_int;
-use bstr::{BString, ByteSlice};
+use std::ffi::{CStr, c_int};
 
-use crate::ffi;
-
-use crate::utils::*;
+use sealbindings::{LuauState, StateExt, SealValue};
 
 pub struct WebviewOptions {
     pub title: String,
     pub html: String,
+    pub show_titlebar: bool,
     pub size: (f32, f32),
     pub resizeable: bool,
     pub max_size: Option<(f32, f32)>,
     pub min_size: Option<(f32, f32)>,
+    pub always_on_top: bool,
 }
 impl WebviewOptions {
-    /// SAFETY: element at stack idx -1 must be a vector
-    unsafe fn x_and_y_from_vector(state: *mut ffi::lua_State) -> (f32, f32) {
-        // yeah so the luau engineers had this brilliant idea
-        // and make accessing x, y, z be pointer offsets from x. so very safe
-        // i guess that's just what an array is in C
-        // SAFETY: we know value at stack idx -1 is a vector therefore
-        // y and z are guaranteed to be pointer offsets 
-        // of the size of f32 away from the pointer returned by lua_tovector (pointer to x)
-        // we only need x and y, so we only need to move the pointer by 1 f32 to the right
-        let x_ptr = unsafe { ffi::lua_tovector(state, -1) };
-        let x = unsafe { *x_ptr };
-        let y_ptr = unsafe { x_ptr.add(1) };
-        let y = unsafe { *y_ptr };
-        (x, y)
-    }
-    /// Extracts relevant values from the table passed to webview.create;
-    /// - If there's an error, pushes the wrapped_error onto the stack
-    /// - If there's a passed event handler function, pushes it to the Luau registry as `WEBSEAL_WEBVIEW_HANDLER`
+    /// Creates a WebviewOptions table from table at stack idx -1
+    /// 
     /// # Safety
-    /// - `state` must be a pointer to a non-null Luau state
-    /// - The value at stack index -1 must be a Luau table.
-    pub unsafe fn from_table_on_stack(state: *mut ffi::lua_State, function_name: &'static str) -> Result<Self, c_int> {
-        let title_type = unsafe { ffi::lua_getfield(state, -1, c"title".as_ptr()) };
-        let title = if title_type == ffi::LUA_TSTRING {
-            let ptr = unsafe { ffi::lua_tostring(state, -1) };
-            let s = unsafe { BString::clone_from_ptr(ptr) }.to_str_lossy().to_string();
-            s
-        } else {
-            String::from("seal")
-        };
-        // get rid of title to balance stack
-        unsafe { ffi::lua_pop(state, 1) };
+    /// - table must exist at stack idx -1
+    /// - luau state must not be null ptr
+    pub unsafe fn from_table_on_stack(state: *mut LuauState, function_name: &'static str) -> Result<Self, c_int> {
+        // we assume stack idx -1 is already a table
+        // stack: [ opts table ]
+        
+        let _sg = state.stack_returns_none_or_errs();
 
-        let html_type = unsafe { ffi::lua_getfield(state, -1, c"html".as_ptr()) };
-        let html = if html_type == ffi::LUA_TSTRING {
-            let ptr = unsafe { ffi::lua_tostring(state, -1) };
-            let s = unsafe { BString::clone_from_ptr(ptr) }.to_str_lossy().to_string();
-            // get rid of html to balance stack
-            unsafe { ffi::lua_pop(state, 1) };
-            s
-        } else {
-            push_wrapped_error(state, &format!("{}: missing or incorrect table field 'html' (got {})", function_name, unsafe { type_of(state, -1) }));
-            return Err(1);
+        let title = Self::get_string_non_nul(state, c"title", function_name)?
+            .unwrap_or(String::from("seal"));
+
+        let Some(html) = Self::get_string_non_nul(state, c"html", function_name)? else {
+            return Err(state.push_wrapped_error(format!("{} missing required option options.html (should be a string)", function_name)));
         };
 
-        let size_type = unsafe { ffi::lua_getfield(state, -1, c"size".as_ptr()) };
-        let size = if size_type == ffi::LUA_TVECTOR {
-            unsafe { Self::x_and_y_from_vector(state) }
-        } else {
-            (420.0, 600.0)
-        };
-        // get rid of the vector or nil to balance stack
-        unsafe { ffi::lua_pop(state, 1) };
+        let size = Self::get_opt_vector(state, c"size", function_name)?
+            .unwrap_or((420.0, 600.0));
 
-        let resizeable_type = unsafe { ffi::lua_getfield(state, -1, c"resizeable".as_ptr()) };
-        let resizeable = if resizeable_type == ffi::LUA_TBOOLEAN {
-            let b = unsafe { ffi::lua_toboolean(state, -1) };
-            match b {
-                0 => false,
-                1 => true,
-                _ => unreachable!("booleaning not boolington")
-            }
-        } else {
-            true
-        };
-        unsafe { ffi::lua_pop(state, 1) };
+        let resizeable = Self::get_bool(state, c"resizeable", true, function_name)?;
+        let show_titlebar = Self::get_bool(state, c"show_titlebar", true, function_name)?;
+        let always_on_top = Self::get_bool(state, c"always_on_top", false, function_name)?;
 
-        let min_size_type = unsafe { ffi::lua_getfield(state, -1, c"min_size".as_ptr()) };
-        let min_size = if min_size_type == ffi::LUA_TVECTOR {
-            Some(unsafe { Self::x_and_y_from_vector(state) })
-        } else {
-            None
-        };
-        unsafe { ffi::lua_pop(state, 1) };
-
-        let max_size_type = unsafe { ffi::lua_getfield(state, -1, c"max_size".as_ptr()) };
-        let max_size = if max_size_type == ffi::LUA_TVECTOR {
-            Some(unsafe { Self::x_and_y_from_vector(state) })
-        } else {
-            None
-        };
-        unsafe { ffi::lua_pop(state, 1) };
+        let min_size = Self::get_opt_vector(state, c"min_size", function_name)?;
+        let max_size = Self::get_opt_vector(state, c"max_size", function_name)?;
 
         Ok(Self {
             title,
             html,
+            show_titlebar,
             size,
             resizeable,
-            min_size,
             max_size,
+            min_size,
+            always_on_top
         })
+    }
+
+    // helper functions for from_table_on_stack
+
+    /// # Safety
+    /// - state must be valid
+    /// - stack idx -1 must be luau table
+    unsafe fn get_and_pop(state: *mut LuauState, field: &CStr) -> SealValue {
+        // put field on stack so we can turn it into an owned SealValue
+        unsafe { state.get_field(-1, field) };
+        // make owned SealValue for returning
+        let value = state.to_seal(-1);
+        // get rid of whatever we just put to stack to keep stack balanced
+        unsafe { state.pop(1) };
+
+        value
+    }
+
+    fn get_string_non_nul(state: *mut LuauState, field: &CStr, function_name: &'static str) -> Result<Option<String>, c_int> {
+        let value = unsafe { Self::get_and_pop(state, field) };
+
+        let content = match value {
+            SealValue::String(s) => s.to_string(),
+            SealValue::Nil => {
+                return Ok(None);
+            },
+            other => {
+                return Err(state.push_wrapped_error(format!("{}: options.{} should be a string or nil, got: {:?}", function_name, field.to_string_lossy(), other)));
+            }
+        };
+
+        if content.contains('\0') {
+            return Err(state.push_wrapped_error(format!("{}: options.{} should not contain embedded NUL bytes", function_name, field.to_string_lossy())));
+        }
+
+        Ok(Some(content))
+    }
+
+    fn get_opt_vector(state: *mut LuauState, field: &CStr, function_name: &'static str) -> Result<Option<(f32, f32)>, c_int> {
+        let value = unsafe { Self::get_and_pop(state, field) };
+
+        let tup = match value {
+            SealValue::Vector(x, y, _) => {
+                (x, y)
+            },
+            SealValue::Nil => {
+                return Ok(None);
+            },
+            other => {
+                return Err(state.push_wrapped_error(format!("{}: expected options.{} to be a vector or nil, got: {:?}", function_name, field.to_string_lossy(), other)));
+            }
+        };
+
+        Ok(Some(tup))
+    }
+
+    fn get_bool(state: *mut LuauState, field: &CStr, default: bool, function_name: &'static str) -> Result<bool, c_int> {
+        let value = unsafe { Self::get_and_pop(state, field) };
+
+        match value {
+            SealValue::Boolean(b) => Ok(b),
+            SealValue::Nil => Ok(default),
+            other => {
+                return Err(state.push_wrapped_error(format!("{}: expected options.{} to be a boolean or nil, got: {:?}", function_name, field.to_string_lossy(), other)));
+            }
+        }
     }
 }

@@ -2,7 +2,7 @@
 
 Tao/Wry webview bindings for [seal](https://github.com/seal-runtime/seal)
 
-This only really has been 'tested' on Linux, but *should* work on Windows.
+This is unfortunately kind of unreliable thanks to how we're spawning the webview on another thread, which is barely supported by Tao/Wry.. I've gotten segfaults with this on Linux due to bugs in their implementation... Will look into other ways to do this once I have time.
 
 You'll need a version of *seal* that exposes bindings to the C-Stack API for `sealbindings`.
 
